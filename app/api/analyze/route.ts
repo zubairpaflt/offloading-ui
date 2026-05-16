@@ -1,14 +1,11 @@
 // app/api/analyze/route.ts
 //
 // Restored scoring engine (R/K/M/C/I/G/D + Ut + CP + E + CI) based on your real model.
-// - Uses OpenAI Responses API with strict JSON schema output for segments + per-turn dims.
-// - Applies your operational suppression + question-depth calibration + dependency calibration.
-// - Computes Ut series, dimension means, participation richness (Sp), and session E.
-// - Reliability rules:
-//   (1) suppress quantitative if userTurns < 5
-//   (2) suppress quantitative when cognitive discontinuity across substantial segments is detected
+// IMPORTANT BUILD FIX:
+// - Do NOT instantiate OpenAI at module scope (can crash Vercel build if env missing).
+// - Instantiate lazily inside request handler.
 //
-// Env required:
+// Env required at runtime (Vercel / local):
 // - OPENAI_API_KEY
 // - (optional) SCORER_MODEL  e.g. "gpt-4.1-mini"
 
@@ -66,7 +63,13 @@ type ModelScoreOutput = {
   qualitative_summary: string;
 };
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+/* ------------------------------ OpenAI client (lazy) ------------------------------ */
+
+function getClient() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  return new OpenAI({ apiKey: key });
+}
 
 /* ------------------------------ Utilities ------------------------------ */
 
@@ -118,13 +121,6 @@ function buildTranscript(turns: Turn[]) {
   return turns.map((t) => `[${t.id}] ${t.speaker.toUpperCase()}: ${t.text}`).join("\n");
 }
 
-/**
- * Robust transcript parsing:
- * Supports lines like:
- *   User: ...
- *   Assistant: ...
- * Also accepts raw lines (defaults to user).
- */
 function splitTranscript(transcript: string): Turn[] {
   const rawLines = (transcript ?? "").replace(/\r\n/g, "\n").split("\n");
   const lines = rawLines
@@ -197,7 +193,6 @@ function computeSpFromTurnScores(turnScores: Array<{ tag: string }>) {
 
   let Sp = 0.65 * ratio + 0.35 * streakScore;
 
-  // small-session penalty under 6 turns
   const sizeFactor = clamp01(n / 6);
   Sp *= sizeFactor;
 
@@ -225,7 +220,6 @@ function computeUtSeries(turnScores: TurnScore[]): Array<{
       D: clamp01(dimsIn.D),
     };
 
-    // Ut = mean of "cognitive" dims excluding dependency D
     const Ut = clamp01(mean([dims.R, dims.K, dims.M, dims.C, dims.I, dims.G]));
 
     return {
@@ -271,10 +265,7 @@ function computeSessionE(input: {
 
   const UtMean = clamp01(mean(ut.map(clamp01)));
 
-  // Components (your model)
-  const Sd = clamp01(
-    mean([dimMeans.R, dimMeans.K, dimMeans.M, dimMeans.C, dimMeans.I, dimMeans.G].map(clamp01))
-  );
+  const Sd = clamp01(mean([dimMeans.R, dimMeans.K, dimMeans.M, dimMeans.C, dimMeans.I, dimMeans.G].map(clamp01)));
   const St = UtMean;
   const Sc = conceptualShare;
   const Sp = participationRichness;
@@ -295,18 +286,7 @@ function computeSessionE(input: {
     else if (diff < -0.07) tr = "decreasing";
   }
 
-  return {
-    E,
-    Sd,
-    St,
-    Sc,
-    Sp,
-    Ecore,
-    durationBonus,
-    qualityGate,
-    nTurns: userTurnsCount,
-    tr,
-  };
+  return { E, Sd, St, Sc, Sp, Ecore, durationBonus, qualityGate, nTurns: userTurnsCount, tr };
 }
 
 /* ----------------------- Cognitive discontinuity mode ----------------------- */
@@ -315,38 +295,21 @@ function norm(s: string) {
   return (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function segmentCategory(
-  label: string
-): "topic" | "email" | "code" | "formatting" | "translation" | "admin" {
+function segmentCategory(label: string): "topic" | "email" | "code" | "formatting" | "translation" | "admin" {
   const t = norm(label);
 
-  if (/\b(email|mail|letter|cover letter|recommendation|application|subject line|reply)\b/.test(t))
-    return "email";
-  if (
-    /\b(code|coding|debug|bug|error|stack|typescript|javascript|python|node|react|next|api|server|vercel|git|github)\b/.test(
-      t
-    )
-  )
-    return "code";
-  if (/\b(rewrite|rephrase|paraphrase|summarize|shorten|condense|bullet|format|proofread|grammar|tone|style)\b/.test(t))
-    return "formatting";
+  if (/\b(email|mail|letter|cover letter|recommendation|application|subject line|reply)\b/.test(t)) return "email";
+  if (/\b(code|coding|debug|bug|error|stack|typescript|javascript|python|node|react|next|api|server|vercel|git|github)\b/.test(t)) return "code";
+  if (/\b(rewrite|rephrase|paraphrase|summarize|shorten|condense|bullet|format|proofread|grammar|tone|style)\b/.test(t)) return "formatting";
   if (/\b(translate|translation|urdu|english)\b/.test(t)) return "translation";
-  if (/\b(schedule|meeting|appointment|deadline|reminder|invoice|billing|account|login)\b/.test(t))
-    return "admin";
+  if (/\b(schedule|meeting|appointment|deadline|reminder|invoice|billing|account|login)\b/.test(t)) return "admin";
 
   return "topic";
 }
 
-function decideReportMode(
-  segments: Segment[],
-  userTurnsCount: number,
-  minUserTurnsForQuant = 5
-): { mode: ReportMode; reason?: string } {
+function decideReportMode(segments: Segment[], userTurnsCount: number, minUserTurnsForQuant = 5): { mode: ReportMode; reason?: string } {
   if (userTurnsCount < minUserTurnsForQuant) {
-    return {
-      mode: "qual_only",
-      reason: `Too few user turns (${userTurnsCount}) for reliable quantitative scoring (requires ≥ ${minUserTurnsForQuant}).`,
-    };
+    return { mode: "qual_only", reason: `Too few user turns (${userTurnsCount}) for reliable quantitative scoring (requires ≥ ${minUserTurnsForQuant}).` };
   }
 
   const segs = (segments ?? []).map((s) => ({
@@ -358,7 +321,6 @@ function decideReportMode(
   }));
 
   const substantial = segs.filter((s) => (s.shareUserTurns ?? 0) >= 0.15);
-
   const dominant = substantial.find((s) => (s.shareUserTurns ?? 0) >= 0.70);
   if (dominant) return { mode: "quant_qual" };
 
@@ -370,25 +332,17 @@ function decideReportMode(
   const hasUtility = distinct.some((c) => c !== "topic");
 
   if (hasUtility && distinct.length >= 3) {
-    return {
-      mode: "no_report",
-      reason:
-        "Session contains multiple unrelated task segments (cognitive discontinuity); a single quantitative score would be misleading.",
-    };
+    return { mode: "no_report", reason: "Session contains multiple unrelated task segments (cognitive discontinuity); a single quantitative score would be misleading." };
   }
 
   if (hasUtility && distinct.length >= 2) {
-    return {
-      mode: "qual_only",
-      reason:
-        "Unrelated task shift detected (e.g., topic discussion → utility task); quantitative scoring is suppressed for reliability.",
-    };
+    return { mode: "qual_only", reason: "Unrelated task shift detected (topic → utility); quantitative scoring is suppressed for reliability." };
   }
 
   return { mode: "quant_qual" };
 }
 
-/* ------------------- Your operational suppression + calibration ------------------- */
+/* ------------------- Operational suppression + dependency calibration ------------------- */
 
 function cap(x: number, max: number) {
   return Math.min(clamp01(x), max);
@@ -524,13 +478,11 @@ function classifyTurn(textRaw: string): {
     (/^(define|what is|explain)\b/.test(t) && conHits === 0);
 
   const forcedMixed = opHits > 0 && conHits > 0;
-
   const forcedConceptual = conHits > 0 && opHits === 0 && (!questionHeavy || hasElaboration);
 
   if (forcedOperational) return { forcedTag: "operational", formattingOnly, hasElaboration, questionHeavy };
   if (forcedMixed) return { forcedTag: "mixed", formattingOnly: false, hasElaboration, questionHeavy };
   if (forcedConceptual) return { forcedTag: "conceptual", formattingOnly: false, hasElaboration, questionHeavy };
-
   if (conHits > 0 && opHits === 0) return { forcedTag: "mixed", formattingOnly: false, hasElaboration, questionHeavy };
 
   return { forcedTag: "operational", formattingOnly: false, hasElaboration, questionHeavy };
@@ -569,12 +521,10 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
 
     ts.tag = cls.forcedTag;
 
-    // Promote some "operational" turns to mixed if they contain higher-order questions.
     if (ts.tag === "operational" && !cls.formattingOnly && higherOrderCount > 0 && qd.retrieval === 0) {
       ts.tag = "mixed";
     }
 
-    // Clamp
     ts.dims.R = clamp01(ts.dims.R);
     ts.dims.K = clamp01(ts.dims.K);
     ts.dims.M = clamp01(ts.dims.M);
@@ -617,13 +567,11 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
         ts.dims.R = clamp01(ts.dims.R + 0.10 * boostScale);
       }
 
-      // question-heavy without elaboration becomes mixed
       if (cls.questionHeavy && !cls.hasElaboration && ts.tag === "conceptual") {
         ts.tag = "mixed";
       }
     }
 
-    // pure retrieval forced operational + capped
     if (isPureRetrieval) {
       ts.tag = "operational";
       ts.dims.R = cap(ts.dims.R, 0.20);
@@ -633,7 +581,6 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
       ts.dims.I = cap(ts.dims.I, 0.25);
     }
 
-    // operational caps
     if (ts.tag === "operational") {
       ts.dims.R = cap(ts.dims.R, 0.20);
       ts.dims.K = cap(ts.dims.K, 0.20);
@@ -644,7 +591,6 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
     }
   }
 
-  // recompute conceptual_share
   const n = out.turn_scores.length || 1;
   const conceptualCount = out.turn_scores.reduce((acc, t) => {
     if (t.tag === "conceptual") return acc + 1;
@@ -654,7 +600,7 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
 
   out.conceptual_share = clamp01(conceptualCount / n);
 
-  // Dependency calibration
+  // Dependency calibration (your rule)
   const D_ALPHA = 0.60;
   const W_CP = 0.60;
   const W_COG = 0.40;
@@ -766,7 +712,7 @@ Hard constraints:
 - D (Dependency) may be HIGH on operational turns if the user is delegating work.
 `.trim();
 
-async function scoreWithModel(turns: Turn[]): Promise<ModelScoreOutput> {
+async function scoreWithModel(turns: Turn[], client: OpenAI): Promise<ModelScoreOutput> {
   const transcript = buildTranscript(turns);
 
   const tasks = `
@@ -814,55 +760,31 @@ ${transcript}
 
 function quickInterpretationFromBands(Eb: Band, CPb: Band, CIb: Band) {
   const strength =
-    Eb === "advanced" || Eb === "very_high"
-      ? "strong"
-      : Eb === "high" || Eb === "moderate_high"
-        ? "good"
-        : Eb === "moderate"
-          ? "moderate"
-          : "limited";
+    Eb === "advanced" || Eb === "very_high" ? "strong" :
+    Eb === "high" || Eb === "moderate_high" ? "good" :
+    Eb === "moderate" ? "moderate" :
+    "limited";
 
   const concept =
-    CPb === "advanced" || CPb === "very_high"
-      ? "high conceptual participation"
-      : CPb === "high" || CPb === "moderate_high"
-        ? "solid conceptual participation"
-        : CPb === "moderate"
-          ? "some conceptual participation"
-          : "mostly operational engagement";
+    CPb === "advanced" || CPb === "very_high" ? "high conceptual participation" :
+    CPb === "high" || CPb === "moderate_high" ? "solid conceptual participation" :
+    CPb === "moderate" ? "some conceptual participation" :
+    "mostly operational engagement";
 
   const collab =
-    CIb === "advanced" || CIb === "very_high"
-      ? "high collaboration quality"
-      : CIb === "high" || CIb === "moderate_high"
-        ? "good collaboration quality"
-        : CIb === "moderate"
-          ? "moderate collaboration quality"
-          : "low collaboration quality";
+    CIb === "advanced" || CIb === "very_high" ? "high collaboration quality" :
+    CIb === "high" || CIb === "moderate_high" ? "good collaboration quality" :
+    CIb === "moderate" ? "moderate collaboration quality" :
+    "low collaboration quality";
 
   return `${strength[0].toUpperCase() + strength.slice(1)} engagement with ${concept} and ${collab}.`;
 }
 
 function scoreSummary(E: number, CP: number, CI: number, tr: "increasing" | "decreasing" | "stable") {
-  const trText =
-    tr === "increasing"
-      ? "Engagement increases across turns."
-      : tr === "decreasing"
-        ? "Engagement tapers over time."
-        : "Engagement stays fairly stable.";
+  const trText = tr === "increasing" ? "Engagement increases across turns." : tr === "decreasing" ? "Engagement tapers over time." : "Engagement stays fairly stable.";
   const eTxt = E >= 0.61 ? "Overall engagement is high." : E >= 0.41 ? "Overall engagement is moderate." : "Overall engagement is low.";
-  const cpTxt =
-    CP >= 0.55
-      ? "Many turns show conceptual thinking (or mixed conceptual moves)."
-      : CP >= 0.35
-        ? "Some conceptual turns appear, but operational turns remain common."
-        : "Most turns are operational with limited conceptual processing.";
-  const ciTxt =
-    CI >= 0.60
-      ? "Collaboration looks strong (co-thinking rather than simple delegation)."
-      : CI >= 0.40
-        ? "Collaboration is present but uneven."
-        : "Interaction leans toward delegation/offloading rather than co-thinking.";
+  const cpTxt = CP >= 0.55 ? "Many turns show conceptual thinking (or mixed conceptual moves)." : CP >= 0.35 ? "Some conceptual turns appear, but operational turns remain common." : "Most turns are operational with limited conceptual processing.";
+  const ciTxt = CI >= 0.60 ? "Collaboration looks strong (co-thinking rather than simple delegation)." : CI >= 0.40 ? "Collaboration is present but uneven." : "Interaction leans toward delegation/offloading rather than co-thinking.";
   return `${eTxt} ${trText} ${cpTxt} ${ciTxt}`;
 }
 
@@ -890,7 +812,6 @@ export async function POST(req: Request) {
   const userTurnsCount = countUserTurns(turns);
   const MIN_USER_TURNS = 5;
 
-  // Reliability: minimum turns
   if (userTurnsCount < MIN_USER_TURNS) {
     return Response.json({
       ok: true,
@@ -904,10 +825,18 @@ export async function POST(req: Request) {
     });
   }
 
-  // Score with model + apply your calibration
+  // Build-safe: create client only at runtime
+  const client = getClient();
+  if (!client) {
+    return Response.json(
+      { ok: false, error: "OPENAI_API_KEY is not set on the server (Vercel env vars). Add it and redeploy." },
+      { status: 500 }
+    );
+  }
+
   let scored: ModelScoreOutput;
   try {
-    scored = await scoreWithModel(turns);
+    scored = await scoreWithModel(turns, client);
   } catch (e: any) {
     return Response.json(
       { ok: false, error: e?.message || "Scoring model error. Check OPENAI_API_KEY and SCORER_MODEL." },
@@ -915,14 +844,11 @@ export async function POST(req: Request) {
     );
   }
 
-  // Report mode based on cognitive discontinuity
   const modeDecision = decideReportMode(scored.segments ?? [], userTurnsCount, MIN_USER_TURNS);
 
-  // Always return qualitative
   const qualitativeSummary = scored.qualitative_summary ?? "";
   const segmentSummaries = scored.segment_summaries ?? [];
 
-  // If we must suppress quantitative due to discontinuity:
   if (modeDecision.mode === "qual_only" || modeDecision.mode === "no_report") {
     return Response.json({
       ok: true,
@@ -939,7 +865,6 @@ export async function POST(req: Request) {
     });
   }
 
-  // Quantitative path
   const utObjs = computeUtSeries(scored.turn_scores ?? []);
   const means = meanDims(utObjs);
   const Sp = computeSpFromTurnScores(scored.turn_scores ?? []);
