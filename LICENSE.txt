@@ -1,0 +1,7 @@
+Copyright © 2026 Muhammad Zubair
+
+All rights reserved.
+
+This software and associated files may not be copied, modified,
+distributed, sublicensed, or commercially used without explicit
+written permission from the author.
