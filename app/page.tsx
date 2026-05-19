@@ -49,7 +49,6 @@ type ApiResponse =
         quantitativeSuppressed: boolean;
         suppressedReason?: string;
       };
-      qualitativeSummary?: string;
       segmentSummaries?: Array<{ segmentId: string; summary: string }>;
       segments?: Segment[];
       level1?: {
@@ -66,7 +65,6 @@ type ApiResponse =
         userTurns: number;
       };
       quickInterpretation?: string;
-      scoreAlignedSummary?: string;
       advanced?: {
         dimensionMeans?: { Ut?: number } & Partial<Dims7>;
         UtSeries?: Array<{ turnId: string; Ut: number; dims: Dims7 }>;
@@ -196,17 +194,13 @@ function LineChart({
   values: number[];
   height?: number;
 }) {
-  const w = 560; // logical width; scales via viewBox
+  const w = 560;
   const h = height;
   const pad = 10;
 
   const arr = (values ?? []).map(clamp01);
   if (arr.length < 2) {
-    return (
-      <div className="text-xs text-neutral-600 dark:text-neutral-400">
-        Not enough points to plot a trajectory.
-      </div>
-    );
+    return <div className="text-xs text-neutral-600 dark:text-neutral-400">Not enough points to plot a trajectory.</div>;
   }
 
   const min = Math.min(...arr);
@@ -226,26 +220,10 @@ function LineChart({
 
   return (
     <div className="w-full">
-      <svg
-        viewBox={`0 0 ${w} ${h}`}
-        className="w-full h-auto"
-        role="img"
-        aria-label="Ut trajectory chart"
-      >
-        {/* background */}
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-auto" role="img" aria-label="Ut trajectory chart">
         <rect x="0" y="0" width={w} height={h} rx="10" className="fill-neutral-50 dark:fill-neutral-900/30" />
-        {/* midline */}
-        <line
-          x1={pad}
-          y1={h / 2}
-          x2={w - pad}
-          y2={h / 2}
-          className="stroke-neutral-200 dark:stroke-neutral-800"
-          strokeWidth="1"
-        />
-        {/* path */}
+        <line x1={pad} y1={h / 2} x2={w - pad} y2={h / 2} className="stroke-neutral-200 dark:stroke-neutral-800" strokeWidth="1" />
         <path d={d} className="stroke-neutral-900 dark:stroke-neutral-100" strokeWidth="2" fill="none" />
-        {/* points */}
         {pts.map((p, i) => (
           <circle key={i} cx={p.x} cy={p.y} r="2.5" className="fill-neutral-900 dark:fill-neutral-100" />
         ))}
@@ -320,8 +298,6 @@ export default function Page() {
     const arr = advanced?.turnScores ?? [];
     const q = (turnSearch ?? "").trim().toLowerCase();
 
-    // we don't have raw turn text here; filter by id/tag only (keeps UI light).
-    // if you later want text, we can return turn texts from API too.
     let out = arr;
 
     if (turnTagFilter !== "all") {
@@ -364,7 +340,7 @@ export default function Page() {
     }
   }
 
-  const rightTitle = suppressed ? "Session Results (Qualitative Only)" : "Session Results";
+  const rightTitle = "Session Results";
 
   const tabBtn = (id: typeof advancedTab, label: string) => {
     const active = advancedTab === id;
@@ -386,19 +362,14 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50">
       <div className="mx-auto max-w-6xl px-4 py-8">
-        {/* Header */}
         <div className="mb-6">
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-            Cognitive Engagement Analyzer
-          </h1>
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Cognitive Engagement Analyzer</h1>
           <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
             Measure how actively a person participates in thinking during human–AI interaction.
           </p>
         </div>
 
-        {/* Two-column first window */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left: input */}
           <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-sm">
             <div className="p-5">
               <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
@@ -424,9 +395,7 @@ export default function Page() {
                 <button
                   onClick={onAnalyze}
                   disabled={loading || !transcript.trim()}
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold
-                             bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed
-                             dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
+                  className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
                 >
                   {loading ? "Analyzing..." : "Analyze"}
                 </button>
@@ -444,14 +413,11 @@ export default function Page() {
             </div>
           </section>
 
-          {/* Right: results */}
           <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-sm">
             <div className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                    {rightTitle}
-                  </h2>
+                  <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">{rightTitle}</h2>
                   <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
                     {data && "ok" in data && data.ok ? (
                       <>
@@ -472,7 +438,6 @@ export default function Page() {
               </div>
 
               <div className="mt-4 space-y-4">
-                {/* Suppressed view */}
                 {suppressed && data && "ok" in data && data.ok ? (
                   <div className="space-y-3">
                     <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/30 p-3">
@@ -483,21 +448,9 @@ export default function Page() {
                         {data.meta.suppressedReason ?? "Quantitative scoring is unavailable for this session."}
                       </div>
                     </div>
-
-                    {data.qualitativeSummary ? (
-                      <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3">
-                        <div className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                          Qualitative Summary
-                        </div>
-                        <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-200 leading-relaxed">
-                          {data.qualitativeSummary}
-                        </p>
-                      </div>
-                    ) : null}
                   </div>
                 ) : null}
 
-                {/* Level 1 (Quant) */}
                 {hasQuant && data && "ok" in data && data.ok && data.level1 ? (
                   <>
                     <div className="space-y-4">
@@ -530,44 +483,21 @@ export default function Page() {
                       </p>
                     </div>
 
-                    <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3">
-                      <div className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                        Summary (aligned with scores)
-                      </div>
-                      <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-200 leading-relaxed">
-                        {data.scoreAlignedSummary ?? "—"}
-                      </p>
-
-                      {data.qualitativeSummary ? (
-                        <details className="mt-3">
-                          <summary className="cursor-pointer text-xs text-neutral-600 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200">
-                            Read qualitative summary
-                          </summary>
-                          <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-200 leading-relaxed">
-                            {data.qualitativeSummary}
-                          </p>
-                        </details>
-                      ) : null}
-                    </div>
-
                     <div className="pt-1 flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => setShowAdvanced((v) => !v)}
-                        className="rounded-xl border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold
-                                   hover:bg-neutral-50 dark:hover:bg-neutral-900/40"
+                        className="rounded-xl border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold hover:bg-neutral-50 dark:hover:bg-neutral-900/40"
                       >
                         {showAdvanced ? "Hide Advanced" : "Show Advanced Details"}
                       </button>
                       <button
                         onClick={() => setShowRaw((v) => !v)}
-                        className="rounded-xl border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold
-                                   hover:bg-neutral-50 dark:hover:bg-neutral-900/40"
+                        className="rounded-xl border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold hover:bg-neutral-50 dark:hover:bg-neutral-900/40"
                       >
                         {showRaw ? "Hide Raw JSON" : "Show Raw JSON"}
                       </button>
                     </div>
 
-                    {/* FULL Advanced View (collapsed by default) */}
                     {showAdvanced ? (
                       <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3 space-y-3">
                         <div className="flex items-start justify-between gap-3">
@@ -587,7 +517,6 @@ export default function Page() {
                           </div>
                         </div>
 
-                        {/* Tabs */}
                         <div className="flex flex-wrap gap-2">
                           {tabBtn("overview", "Overview")}
                           {tabBtn("trajectory", "Ut Trajectory")}
@@ -596,10 +525,8 @@ export default function Page() {
                           {tabBtn("segments", "Segments")}
                         </div>
 
-                        {/* Tab panels */}
                         {advancedTab === "overview" ? (
                           <div className="space-y-3">
-                            {/* Components card */}
                             <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/30 p-3">
                               <div className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
                                 Session Components (from your E model)
@@ -640,7 +567,6 @@ export default function Page() {
                               </div>
                             </div>
 
-                            {/* Dimension mini-bars */}
                             <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3">
                               <div className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
                                 7-Dimension Means (quick view)
@@ -698,13 +624,27 @@ export default function Page() {
                                   Show dimension definitions (short)
                                 </summary>
                                 <div className="mt-2 text-xs text-neutral-600 dark:text-neutral-400 leading-relaxed space-y-1">
-                                  <div><span className="font-semibold text-neutral-700 dark:text-neutral-300">R</span>: Reasoning / causal thinking</div>
-                                  <div><span className="font-semibold text-neutral-700 dark:text-neutral-300">K</span>: Knowledge engagement / use</div>
-                                  <div><span className="font-semibold text-neutral-700 dark:text-neutral-300">M</span>: Metacognition / reflection</div>
-                                  <div><span className="font-semibold text-neutral-700 dark:text-neutral-300">C</span>: Critical evaluation / comparison</div>
-                                  <div><span className="font-semibold text-neutral-700 dark:text-neutral-300">I</span>: Initiative / self-directed engagement</div>
-                                  <div><span className="font-semibold text-neutral-700 dark:text-neutral-300">G</span>: Generative integration / synthesis</div>
-                                  <div><span className="font-semibold text-neutral-700 dark:text-neutral-300">D</span>: Dependency / delegation (offloading)</div>
+                                  <div>
+                                    <span className="font-semibold text-neutral-700 dark:text-neutral-300">R</span>: Reasoning / causal thinking
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-neutral-700 dark:text-neutral-300">K</span>: Knowledge engagement / use
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-neutral-700 dark:text-neutral-300">M</span>: Metacognition / reflection
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-neutral-700 dark:text-neutral-300">C</span>: Critical evaluation / comparison
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-neutral-700 dark:text-neutral-300">I</span>: Initiative / self-directed engagement
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-neutral-700 dark:text-neutral-300">G</span>: Generative integration / synthesis
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-neutral-700 dark:text-neutral-300">D</span>: Dependency / delegation (offloading)
+                                  </div>
                                 </div>
                               </details>
                             </div>
@@ -785,9 +725,7 @@ export default function Page() {
                                       );
                                       return (
                                         <tr key={t.turnId} className="border-t border-neutral-200 dark:border-neutral-800">
-                                          <td className="p-2 text-neutral-700 dark:text-neutral-200 tabular-nums">
-                                            {t.turnId}
-                                          </td>
+                                          <td className="p-2 text-neutral-700 dark:text-neutral-200 tabular-nums">{t.turnId}</td>
                                           <td className="p-2">
                                             <span
                                               className={[
@@ -900,7 +838,6 @@ export default function Page() {
                   </>
                 ) : null}
 
-                {/* Empty state */}
                 {!data ? (
                   <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/30 p-4">
                     <div className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">Ready when you are</div>

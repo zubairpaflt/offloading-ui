@@ -1,6 +1,8 @@
 // app/api/analyze/route.ts
 //
-// Restored scoring engine (R/K/M/C/I/G/D + Ut + CP + E + CI) based on your real model.
+// Scoring engine (R/K/M/C/I/G/D + Ut + CP + E + CI)
+// Cleaned version: removed the long qualitative summary and score-aligned narrative.
+//
 // IMPORTANT BUILD FIX:
 // - Do NOT instantiate OpenAI at module scope (can crash Vercel build if env missing).
 // - Instantiate lazily inside request handler.
@@ -60,7 +62,6 @@ type ModelScoreOutput = {
   segment_summaries: Array<{ segmentId: string; summary: string }>;
   turn_scores: TurnScore[];
   conceptual_share: number;
-  qualitative_summary: string;
 };
 
 /* ------------------------------ OpenAI client (lazy) ------------------------------ */
@@ -86,13 +87,13 @@ function mean(nums: number[]): number {
 
 function band10Code(xRaw: number): Band {
   const x = clamp01(xRaw);
-  if (x <= 0.10) return "very_low";
-  if (x <= 0.20) return "low";
-  if (x <= 0.30) return "mild_moderate";
-  if (x <= 0.40) return "moderate";
-  if (x <= 0.50) return "moderate_high";
-  if (x <= 0.60) return "high";
-  if (x <= 0.70) return "very_high";
+  if (x <= 0.1) return "very_low";
+  if (x <= 0.2) return "low";
+  if (x <= 0.3) return "mild_moderate";
+  if (x <= 0.4) return "moderate";
+  if (x <= 0.5) return "moderate_high";
+  if (x <= 0.6) return "high";
+  if (x <= 0.7) return "very_high";
   return "advanced";
 }
 
@@ -270,7 +271,7 @@ function computeSessionE(input: {
   const Sc = conceptualShare;
   const Sp = participationRichness;
 
-  const Ecore = clamp01(0.40 * Sd + 0.25 * Sc + 0.20 * Sp + 0.15 * St);
+  const Ecore = clamp01(0.4 * Sd + 0.25 * Sc + 0.2 * Sp + 0.15 * St);
 
   const durationBonus = clamp01((userTurnsCount - 5) / 25) * 0.08;
   const qualityGate = clamp01(0.65 + 0.35 * Sc);
@@ -321,7 +322,7 @@ function decideReportMode(segments: Segment[], userTurnsCount: number, minUserTu
   }));
 
   const substantial = segs.filter((s) => (s.shareUserTurns ?? 0) >= 0.15);
-  const dominant = substantial.find((s) => (s.shareUserTurns ?? 0) >= 0.70);
+  const dominant = substantial.find((s) => (s.shareUserTurns ?? 0) >= 0.7);
   if (dominant) return { mode: "quant_qual" };
 
   const categories = substantial.map((s) => segmentCategory(s.label));
@@ -475,7 +476,7 @@ function classifyTurn(textRaw: string): {
   const forcedOperational =
     formattingOnly ||
     (opHits > 0 && conHits === 0 && isShort) ||
-    (/^(define|what is|explain)\b/.test(t) && conHits === 0);
+    /^(define|what is|explain)\b/.test(t) && conHits === 0;
 
   const forcedMixed = opHits > 0 && conHits > 0;
   const forcedConceptual = conHits > 0 && opHits === 0 && (!questionHeavy || hasElaboration);
@@ -549,22 +550,22 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
 
       if (qd.analytical > 0) {
         ts.dims.R = clamp01(ts.dims.R + 0.12 * boostScale);
-        ts.dims.C = clamp01(ts.dims.C + 0.20 * boostScale);
+        ts.dims.C = clamp01(ts.dims.C + 0.2 * boostScale);
       }
 
       if (qd.integrative > 0) {
         ts.dims.G = clamp01(ts.dims.G + 0.25 * boostScale);
-        ts.dims.R = clamp01(ts.dims.R + 0.10 * boostScale);
+        ts.dims.R = clamp01(ts.dims.R + 0.1 * boostScale);
       }
 
       if (qd.reflective > 0) {
         ts.dims.M = clamp01(ts.dims.M + 0.22 * boostScale);
-        ts.dims.I = clamp01(ts.dims.I + 0.10 * boostScale);
+        ts.dims.I = clamp01(ts.dims.I + 0.1 * boostScale);
       }
 
       if (qd.applied > 0) {
         ts.dims.I = clamp01(ts.dims.I + 0.18 * boostScale);
-        ts.dims.R = clamp01(ts.dims.R + 0.10 * boostScale);
+        ts.dims.R = clamp01(ts.dims.R + 0.1 * boostScale);
       }
 
       if (cls.questionHeavy && !cls.hasElaboration && ts.tag === "conceptual") {
@@ -574,7 +575,7 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
 
     if (isPureRetrieval) {
       ts.tag = "operational";
-      ts.dims.R = cap(ts.dims.R, 0.20);
+      ts.dims.R = cap(ts.dims.R, 0.2);
       ts.dims.C = cap(ts.dims.C, 0.15);
       ts.dims.G = cap(ts.dims.G, 0.15);
       ts.dims.M = cap(ts.dims.M, 0.15);
@@ -582,11 +583,11 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
     }
 
     if (ts.tag === "operational") {
-      ts.dims.R = cap(ts.dims.R, 0.20);
-      ts.dims.K = cap(ts.dims.K, 0.20);
-      ts.dims.M = cap(ts.dims.M, 0.20);
-      ts.dims.C = cap(ts.dims.C, 0.20);
-      ts.dims.G = cap(ts.dims.G, 0.20);
+      ts.dims.R = cap(ts.dims.R, 0.2);
+      ts.dims.K = cap(ts.dims.K, 0.2);
+      ts.dims.M = cap(ts.dims.M, 0.2);
+      ts.dims.C = cap(ts.dims.C, 0.2);
+      ts.dims.G = cap(ts.dims.G, 0.2);
       if (cls.formattingOnly) ts.dims.I = cap(ts.dims.I, 0.35);
     }
   }
@@ -601,9 +602,9 @@ function applyOperationalSuppression(out: ModelScoreOutput, turns: Turn[]) {
   out.conceptual_share = clamp01(conceptualCount / n);
 
   // Dependency calibration (your rule)
-  const D_ALPHA = 0.60;
-  const W_CP = 0.60;
-  const W_COG = 0.40;
+  const D_ALPHA = 0.6;
+  const W_CP = 0.6;
+  const W_COG = 0.4;
 
   const cogProxy = clamp01(
     out.turn_scores.reduce((acc, ts) => {
@@ -629,7 +630,7 @@ const SCORE_SCHEMA = {
   schema: {
     type: "object",
     additionalProperties: false,
-    required: ["segments", "turn_scores", "conceptual_share", "qualitative_summary", "segment_summaries"],
+    required: ["segments", "turn_scores", "conceptual_share", "segment_summaries"],
     properties: {
       segments: {
         type: "array",
@@ -683,7 +684,6 @@ const SCORE_SCHEMA = {
         },
       },
       conceptual_share: { type: "number", minimum: 0, maximum: 1 },
-      qualitative_summary: { type: "string" },
     },
   },
 } as const;
@@ -721,8 +721,7 @@ Tasks:
    - segments[].turnIds MUST include only USER turn IDs.
 2) For each USER turn, output dims (0..1) and tag (operational/conceptual/mixed).
 3) conceptual_share = fraction of USER turns that are conceptual (mixed counts as 0.5).
-4) qualitative_summary: 4-7 sentences summarizing engagement pattern for the whole session.
-5) segment_summaries: 1-2 sentences per segment describing engagement in that segment.
+4) segment_summaries: 1-2 sentences per segment describing engagement in that segment.
 `.trim();
 
   const prompt = `
@@ -756,36 +755,37 @@ ${transcript}
   return applyOperationalSuppression(parsed, turns);
 }
 
-/* ---------------------- Score-aligned short summaries ---------------------- */
+/* ---------------------- Quick interpretation ---------------------- */
 
 function quickInterpretationFromBands(Eb: Band, CPb: Band, CIb: Band) {
   const strength =
-    Eb === "advanced" || Eb === "very_high" ? "strong" :
-    Eb === "high" || Eb === "moderate_high" ? "good" :
-    Eb === "moderate" ? "moderate" :
-    "limited";
+    Eb === "advanced" || Eb === "very_high"
+      ? "strong"
+      : Eb === "high" || Eb === "moderate_high"
+        ? "good"
+        : Eb === "moderate"
+          ? "moderate"
+          : "limited";
 
   const concept =
-    CPb === "advanced" || CPb === "very_high" ? "high conceptual participation" :
-    CPb === "high" || CPb === "moderate_high" ? "solid conceptual participation" :
-    CPb === "moderate" ? "some conceptual participation" :
-    "mostly operational engagement";
+    CPb === "advanced" || CPb === "very_high"
+      ? "high conceptual participation"
+      : CPb === "high" || CPb === "moderate_high"
+        ? "solid conceptual participation"
+        : CPb === "moderate"
+          ? "some conceptual participation"
+          : "mostly operational engagement";
 
   const collab =
-    CIb === "advanced" || CIb === "very_high" ? "high collaboration quality" :
-    CIb === "high" || CIb === "moderate_high" ? "good collaboration quality" :
-    CIb === "moderate" ? "moderate collaboration quality" :
-    "low collaboration quality";
+    CIb === "advanced" || CIb === "very_high"
+      ? "high collaboration quality"
+      : CIb === "high" || CIb === "moderate_high"
+        ? "good collaboration quality"
+        : CIb === "moderate"
+          ? "moderate collaboration quality"
+          : "low collaboration quality";
 
   return `${strength[0].toUpperCase() + strength.slice(1)} engagement with ${concept} and ${collab}.`;
-}
-
-function scoreSummary(E: number, CP: number, CI: number, tr: "increasing" | "decreasing" | "stable") {
-  const trText = tr === "increasing" ? "Engagement increases across turns." : tr === "decreasing" ? "Engagement tapers over time." : "Engagement stays fairly stable.";
-  const eTxt = E >= 0.61 ? "Overall engagement is high." : E >= 0.41 ? "Overall engagement is moderate." : "Overall engagement is low.";
-  const cpTxt = CP >= 0.55 ? "Many turns show conceptual thinking (or mixed conceptual moves)." : CP >= 0.35 ? "Some conceptual turns appear, but operational turns remain common." : "Most turns are operational with limited conceptual processing.";
-  const ciTxt = CI >= 0.60 ? "Collaboration looks strong (co-thinking rather than simple delegation)." : CI >= 0.40 ? "Collaboration is present but uneven." : "Interaction leans toward delegation/offloading rather than co-thinking.";
-  return `${eTxt} ${trText} ${cpTxt} ${ciTxt}`;
 }
 
 /* ------------------------------- Handlers ------------------------------- */
@@ -821,7 +821,6 @@ export async function POST(req: Request) {
         suppressedReason: `Quantitative estimates require at least ${MIN_USER_TURNS} user turns.`,
       },
       mode: "qual_only" as ReportMode,
-      qualitativeSummary: "Add more user turns (at least 5) to compute reliable quantitative scores.",
     });
   }
 
@@ -845,8 +844,6 @@ export async function POST(req: Request) {
   }
 
   const modeDecision = decideReportMode(scored.segments ?? [], userTurnsCount, MIN_USER_TURNS);
-
-  const qualitativeSummary = scored.qualitative_summary ?? "";
   const segmentSummaries = scored.segment_summaries ?? [];
 
   if (modeDecision.mode === "qual_only" || modeDecision.mode === "no_report") {
@@ -859,7 +856,6 @@ export async function POST(req: Request) {
         suppressedReason: modeDecision.reason ?? "Quantitative scoring suppressed.",
       },
       mode: modeDecision.mode,
-      qualitativeSummary,
       segmentSummaries,
       segments: scored.segments ?? [],
     });
@@ -907,8 +903,6 @@ export async function POST(req: Request) {
       userTurns: userTurnsCount,
     },
     quickInterpretation: quickInterpretationFromBands(Eb, CPb, CIb),
-    scoreAlignedSummary: scoreSummary(E, CP, CI, session.tr),
-    qualitativeSummary,
     advanced: {
       dimensionMeans: means,
       UtSeries: utObjs,
